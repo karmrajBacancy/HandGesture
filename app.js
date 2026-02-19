@@ -14,6 +14,7 @@ const HAND_CONNECTIONS = [
 ];
 
 let handLandmarker = null;
+let faceLandmarker = null;
 let video = null;
 let canvas = null;
 let ctx = null;
@@ -42,6 +43,11 @@ let drawReleaseFrames = 0;     // Hysteresis: stay drawing for a few frames afte
 let strokeHistory = [];
 let currentStroke = [];
 
+// Smile detection
+const SMILE_THRESHOLD = 0.5;
+const SMILE_COOLDOWN_MS = 1500;
+let lastSmilePhotoTime = 0;
+
 // DOM elements
 const startBtn = document.getElementById('startBtn');
 const statusEl = document.getElementById('status');
@@ -52,7 +58,7 @@ const clearBtn = document.getElementById('clearBtn');
  */
 async function initHandLandmarker() {
   try {
-    const { HandLandmarker, FilesetResolver } = await import(
+    const { HandLandmarker, FaceLandmarker, FilesetResolver } = await import(
       'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/vision_bundle.mjs'
     );
 
@@ -71,6 +77,23 @@ async function initHandLandmarker() {
       minHandPresenceConfidence: 0.75,
       minTrackingConfidence: 0.75
     });
+
+    const faceOpts = {
+      baseOptions: {
+        modelAssetPath: 'https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task',
+        delegate: 'GPU'
+      },
+      runningMode: 'VIDEO',
+      numFaces: 1,
+      outputFaceBlendshapes: true
+    };
+    try {
+      faceLandmarker = await FaceLandmarker.createFromOptions(vision, faceOpts);
+    } catch (faceErr) {
+      console.warn('Face Landmarker GPU failed, trying CPU:', faceErr);
+      faceOpts.baseOptions.delegate = 'CPU';
+      faceLandmarker = await FaceLandmarker.createFromOptions(vision, faceOpts);
+    }
 
     statusEl.textContent = 'Model loaded! Click Start Camera';
     statusEl.className = 'status ready';
@@ -275,6 +298,26 @@ function drawLandmarks(landmarks, color = '#00d9ff', radius = 4) {
 }
 
 /**
+ * Capture photo (camera + hand overlay) and download
+ */
+function capturePhoto() {
+  if (!video || !video.videoWidth || !canvas) return;
+  const tempCanvas = document.createElement('canvas');
+  tempCanvas.width = video.videoWidth;
+  tempCanvas.height = video.videoHeight;
+  const tempCtx = tempCanvas.getContext('2d');
+  tempCtx.translate(tempCanvas.width, 0);
+  tempCtx.scale(-1, 1);
+  tempCtx.drawImage(video, 0, 0);
+  tempCtx.drawImage(canvas, 0, 0);
+  tempCtx.setTransform(1, 0, 0, 1, 0, 0);
+  const link = document.createElement('a');
+  link.download = `smile_${Date.now()}.jpg`;
+  link.href = tempCanvas.toDataURL('image/jpeg', 0.92);
+  link.click();
+}
+
+/**
  * Process video frame and draw hand gestures
  */
 function detectAndDraw() {
@@ -290,10 +333,48 @@ function detectAndDraw() {
 
   const startTimeMs = performance.now();
   let results = null;
+  let faceResults = null;
 
   if (lastVideoTime !== video.currentTime) {
     lastVideoTime = video.currentTime;
     results = handLandmarker.detectForVideo(video, startTimeMs);
+    if (faceLandmarker) {
+      try {
+        faceResults = faceLandmarker.detectForVideo(video, startTimeMs);
+      } catch (e) {
+        console.warn('Face detection error:', e);
+      }
+    }
+  }
+
+  // Smile detection - take photo when smiling (blendshapes or landmark fallback)
+  let isSmiling = false;
+  function doSmileCapture() {
+    const now = performance.now();
+    if (now - lastSmilePhotoTime > SMILE_COOLDOWN_MS) {
+      lastSmilePhotoTime = now;
+      capturePhoto();
+      const el = document.getElementById('smileIndicator');
+      if (el) { el.textContent = '😊 Photo!'; setTimeout(() => { el.textContent = ''; }, 1500); }
+    }
+  }
+  if (faceResults?.faceBlendshapes?.length > 0) {
+    const blendshapes = faceResults.faceBlendshapes[0];
+    const smileCat = blendshapes.categories?.find(c => c.categoryName === 'mouthSmile');
+    if (smileCat && smileCat.score >= SMILE_THRESHOLD) {
+      isSmiling = true;
+      doSmileCapture();
+    }
+  } else if (faceResults?.faceLandmarks?.length > 0) {
+    const lm = faceResults.faceLandmarks[0];
+    if (lm.length >= 292) {
+      const left = lm[61], right = lm[291];
+      const mouthW = Math.abs(right.x - left.x);
+      if (mouthW > 0.12) {
+        isSmiling = true;
+        doSmileCapture();
+      }
+    }
   }
 
   // Clear canvas
@@ -317,6 +398,44 @@ function detectAndDraw() {
     isDrawing = false;
     drawReleaseFrames = 0;
     drawPenCursor(null, null, false);
+  }
+
+  // Draw face landmarks when detected (visual feedback)
+  const mx = (x) => (1 - x) * canvas.width;
+  const my = (y) => y * canvas.height;
+  const FACE_OVAL = [[10,338],[338,297],[297,332],[332,284],[284,251],[251,389],[389,356],[356,454],[454,323],[323,361],[361,288],[288,397],[397,365],[365,379],[379,378],[378,400],[400,377],[377,152],[152,148],[148,176],[176,149],[149,150],[150,136],[136,172],[172,58],[58,132],[132,93],[93,234],[234,127],[127,162],[162,21],[21,54],[54,103],[103,67],[67,109],[109,10]];
+  const LIPS = [[61,146],[146,91],[91,181],[181,84],[84,17],[17,314],[314,405],[405,321],[321,375],[375,291],[61,185],[185,40],[40,39],[39,37],[37,0],[0,267],[267,269],[269,270],[270,409],[409,291],[78,95],[95,88],[88,178],[178,87],[87,14],[14,317],[317,402],[402,318],[318,324],[324,308],[78,191],[191,80],[80,81],[81,82],[82,13],[13,312],[312,311],[311,310],[310,415],[415,308]];
+  if (faceResults?.faceLandmarks?.length > 0 && ctx) {
+    const lm = faceResults.faceLandmarks[0];
+    // Face oval
+    ctx.strokeStyle = isSmiling ? 'rgba(0, 255, 136, 0.9)' : 'rgba(255, 200, 0, 0.8)';
+    ctx.lineWidth = isSmiling ? 3 : 2;
+    ctx.beginPath();
+    const first = lm[FACE_OVAL[0][0]];
+    if (first) ctx.moveTo(mx(first.x), my(first.y));
+    for (const [, b] of FACE_OVAL) {
+      const p = lm[b];
+      if (p) ctx.lineTo(mx(p.x), my(p.y));
+    }
+    ctx.closePath();
+    ctx.stroke();
+    // Lips - highlight when smiling
+    ctx.strokeStyle = isSmiling ? '#00ff88' : 'rgba(255, 150, 100, 0.6)';
+    ctx.lineWidth = isSmiling ? 3 : 1.5;
+    ctx.beginPath();
+    for (const [a, b] of LIPS) {
+      const pa = lm[a], pb = lm[b];
+      if (pa && pb) {
+        ctx.moveTo(mx(pa.x), my(pa.y));
+        ctx.lineTo(mx(pb.x), my(pb.y));
+      }
+    }
+    ctx.stroke();
+  }
+  // Smile indicator (live when smiling, "Photo!" overrides for 1.5s after capture)
+  const smileEl = document.getElementById('smileIndicator');
+  if (smileEl && (performance.now() - lastSmilePhotoTime > SMILE_COOLDOWN_MS)) {
+    smileEl.textContent = isSmiling ? '😊 Smile!' : '';
   }
 
   animationId = requestAnimationFrame(detectAndDraw);

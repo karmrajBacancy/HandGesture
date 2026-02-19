@@ -172,6 +172,11 @@
       color: #00ff88;
     }
     
+    .smile-indicator {
+      font-size: 0.8rem;
+      color: #00ff88;
+    }
+    
     #clearBtn {
       background: rgba(255, 100, 100, 0.3);
       color: #ff6b6b;
@@ -195,11 +200,12 @@
   <div class="header">
     <h1>✋ Karmraj's Hand Gesture Camera</h1>
     <span id="status" class="status loading">Loading...</span>
+    <span id="smileIndicator" class="smile-indicator"></span>
   </div>
   
   <div class="main-grid">
     <div class="camera-section">
-      <div class="instruction-hint">You can draw on the whiteboard by pinching your thumb and first finger together</div>
+      <div class="instruction-hint">Draw: pinch thumb + index. Face the camera and smile to take a photo! (Yellow outline = face detected)</div>
       <div class="panel-label">Camera</div>
       <div class="video-wrapper">
         <video id="video" autoplay playsinline></video>
