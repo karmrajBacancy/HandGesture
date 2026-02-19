@@ -180,6 +180,15 @@
     #clearBtn:hover {
       background: rgba(255, 100, 100, 0.5);
     }
+    
+    #convert3dBtn {
+      background: rgba(0, 217, 255, 0.3);
+      color: #00d9ff;
+    }
+    
+    #convert3dBtn:hover {
+      background: rgba(0, 217, 255, 0.5);
+    }
   </style>
 </head>
 <body>
@@ -209,8 +218,17 @@
   <div class="controls">
     <button id="startBtn" disabled>Start Camera</button>
     <button id="clearBtn">Clear Whiteboard</button>
+    <button id="convert3dBtn">Convert to 3D</button>
   </div>
 
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+    }
+  }
+  </script>
   <script type="module" src="app.js"></script>
 </body>
 </html>

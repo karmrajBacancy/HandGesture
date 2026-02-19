@@ -26,14 +26,21 @@ let whiteboard = null;
 let whiteboardCtx = null;
 let cursorCanvas = null;
 let cursorCtx = null;
-const DRAW_THRESHOLD = 0.04;  // Tighter pinch for more precise drawing
+const DRAW_THRESHOLD = 0.055;  // Thumb + index pinch to draw
 let lastDrawX = null;
 let lastDrawY = null;
 let isDrawing = false;
-// Smoothing for steadier lines
 let smoothedX = null;
 let smoothedY = null;
-const SMOOTHING = 0.35;  // Lower = smoother but more lag
+const SMOOTHING_FAST = 0.5;    // When moving fast
+const SMOOTHING_SLOW = 0.25;   // Stronger smoothing when slow - reduces fuzzy dots
+const GAP_INTERPOLATE = 10;    // Add points when gap exceeds this (px)
+const MIN_POINT_DIST = 4;      // Ignore points closer than this - filters jitter
+let drawReleaseFrames = 0;     // Hysteresis: stay drawing for a few frames after pinch release
+
+// Stroke history for 3D conversion
+let strokeHistory = [];
+let currentStroke = [];
 
 // DOM elements
 const startBtn = document.getElementById('startBtn');
@@ -60,9 +67,9 @@ async function initHandLandmarker() {
       },
       runningMode: 'VIDEO',
       numHands: 2,
-      minHandDetectionConfidence: 0.8,
-      minHandPresenceConfidence: 0.8,
-      minTrackingConfidence: 0.8
+      minHandDetectionConfidence: 0.75,
+      minHandPresenceConfidence: 0.75,
+      minTrackingConfidence: 0.75
     });
 
     statusEl.textContent = 'Model loaded! Click Start Camera';
@@ -102,12 +109,26 @@ function landmarkDistance(a, b) {
 
 /**
  * Map hand landmark (0-1) to whiteboard coordinates
- * Mirror X so drawing feels natural (matches camera preview)
+ * Mirror X so drawing feels natural, preserve aspect ratio with video
  */
 function landmarkToWhiteboard(landmark) {
   if (!whiteboard) return null;
-  const x = (1 - landmark.x) * whiteboard.width;
-  const y = landmark.y * whiteboard.height;
+  const vw = (video && video.videoWidth) || 1920;
+  const vh = (video && video.videoHeight) || 1080;
+  const ww = whiteboard.width;
+  const wh = whiteboard.height;
+  const videoAspect = vw / vh;
+  const boardAspect = ww / wh;
+  let drawW = ww, drawH = wh, offsetX = 0, offsetY = 0;
+  if (videoAspect > boardAspect) {
+    drawH = ww / videoAspect;
+    offsetY = (wh - drawH) / 2;
+  } else {
+    drawW = wh * videoAspect;
+    offsetX = (ww - drawW) / 2;
+  }
+  const x = offsetX + (1 - landmark.x) * drawW;
+  const y = offsetY + landmark.y * drawH;
   return { x, y };
 }
 
@@ -127,32 +148,61 @@ function updateWhiteboardDraw(landmarks) {
   }
 
   const pinchDist = landmarkDistance(thumbTip, indexTip);
-  const shouldDraw = pinchDist < DRAW_THRESHOLD;
+  const pinchActive = pinchDist < DRAW_THRESHOLD;
   const pos = landmarkToWhiteboard(indexTip);
+  if (!pos) return;
 
-  // Smooth position for steadier lines
+  // Stronger smoothing to reduce fuzzy dots
   if (smoothedX === null) smoothedX = pos.x;
   if (smoothedY === null) smoothedY = pos.y;
-  smoothedX = smoothedX + (pos.x - smoothedX) * (1 - SMOOTHING);
-  smoothedY = smoothedY + (pos.y - smoothedY) * (1 - SMOOTHING);
+  const moveDist = Math.hypot(pos.x - smoothedX, pos.y - smoothedY);
+  const smoothing = moveDist > 10 ? SMOOTHING_FAST : SMOOTHING_SLOW;
+  smoothedX = smoothedX + (pos.x - smoothedX) * (1 - smoothing);
+  smoothedY = smoothedY + (pos.y - smoothedY) * (1 - smoothing);
   const drawX = smoothedX;
   const drawY = smoothedY;
 
+  // Hysteresis: stay in draw mode for 3 frames after pinch release (prevents losing drawer)
+  if (pinchActive) {
+    drawReleaseFrames = 0;
+  } else {
+    drawReleaseFrames++;
+  }
+  const shouldDraw = pinchActive || (isDrawing && drawReleaseFrames < 3);
+
   if (shouldDraw) {
     if (lastDrawX !== null && lastDrawY !== null && isDrawing) {
-      whiteboardCtx.beginPath();
-      whiteboardCtx.moveTo(lastDrawX, lastDrawY);
-      whiteboardCtx.lineTo(drawX, drawY);
-      whiteboardCtx.strokeStyle = '#1a1a2e';
-      whiteboardCtx.lineWidth = 2;
-      whiteboardCtx.lineCap = 'round';
-      whiteboardCtx.lineJoin = 'round';
-      whiteboardCtx.stroke();
+      const gap = Math.hypot(drawX - lastDrawX, drawY - lastDrawY);
+      if (gap >= MIN_POINT_DIST) {
+        const segments = Math.max(1, Math.ceil(gap / GAP_INTERPOLATE));
+        for (let i = 1; i <= segments; i++) {
+          const t = i / segments;
+          const x = lastDrawX + (drawX - lastDrawX) * t;
+          const y = lastDrawY + (drawY - lastDrawY) * t;
+          whiteboardCtx.beginPath();
+          whiteboardCtx.moveTo(lastDrawX, lastDrawY);
+          whiteboardCtx.lineTo(x, y);
+          whiteboardCtx.strokeStyle = '#1a1a2e';
+          whiteboardCtx.lineWidth = 2;
+          whiteboardCtx.lineCap = 'round';
+          whiteboardCtx.lineJoin = 'round';
+          whiteboardCtx.stroke();
+          currentStroke.push({ x, y });
+          lastDrawX = x;
+          lastDrawY = y;
+        }
+      }
+    } else {
+      currentStroke = [{ x: lastDrawX ?? drawX, y: lastDrawY ?? drawY }, { x: drawX, y: drawY }];
+      lastDrawX = drawX;
+      lastDrawY = drawY;
     }
-    lastDrawX = drawX;
-    lastDrawY = drawY;
     isDrawing = true;
   } else {
+    if (currentStroke.length > 1) {
+      strokeHistory.push([...currentStroke]);
+    }
+    currentStroke = [];
     lastDrawX = drawX;
     lastDrawY = drawY;
     isDrawing = false;
@@ -265,6 +315,7 @@ function detectAndDraw() {
     smoothedX = null;
     smoothedY = null;
     isDrawing = false;
+    drawReleaseFrames = 0;
     drawPenCursor(null, null, false);
   }
 
@@ -286,6 +337,7 @@ async function startCamera() {
     smoothedX = null;
     smoothedY = null;
     isDrawing = false;
+    drawReleaseFrames = 0;
     startBtn.textContent = 'Start Camera';
     return;
   }
@@ -331,6 +383,9 @@ function resizeWhiteboard() {
     whiteboardCtx = whiteboard.getContext('2d');
     whiteboardCtx.fillStyle = '#ffffff';
     whiteboardCtx.fillRect(0, 0, whiteboard.width, whiteboard.height);
+    strokeHistory = [];
+    currentStroke = [];
+    drawReleaseFrames = 0;
   }
   if (cursorCanvas) {
     cursorCanvas.width = whiteboard.width;
@@ -368,11 +423,192 @@ function clearWhiteboard() {
   smoothedX = null;
   smoothedY = null;
   isDrawing = false;
+  drawReleaseFrames = 0;
+  strokeHistory = [];
+  currentStroke = [];
+}
+
+/**
+ * Convert drawing to 3D and show in modal
+ */
+async function convertTo3D() {
+  const strokes = [...strokeHistory];
+  if (currentStroke.length > 1) strokes.push([...currentStroke]);
+  if (strokes.length === 0) {
+    alert('Draw something first, then click Convert to 3D');
+    return;
+  }
+
+  const THREE = await import('https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js');
+  const { OrbitControls } = await import('https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/controls/OrbitControls.js');
+  const { Scene, PerspectiveCamera, WebGLRenderer, Mesh, MeshPhongMaterial, TubeGeometry, Vector3, AmbientLight, DirectionalLight, Color, Curve, Group, Box3 } = THREE;
+
+  const modal = document.createElement('div');
+  modal.id = 'view3dModal';
+  modal.innerHTML = `
+    <div class="view3d-overlay">
+      <div class="view3d-header">
+        <span>3D View — Drag to rotate • Scroll to zoom</span>
+        <button id="close3dBtn">Close</button>
+      </div>
+      <div class="view3d-controls">
+        <label>Scale <input type="range" id="scale3d" min="0.5" max="3" step="0.1" value="1"></label>
+        <label>Rotate X <input type="range" id="rotX3d" min="0" max="360" step="5" value="0"><span>°</span></label>
+        <label>Rotate Y <input type="range" id="rotY3d" min="0" max="360" step="5" value="0"><span>°</span></label>
+        <label>Tube <input type="range" id="tube3d" min="0.5" max="3" step="0.1" value="1"></label>
+      </div>
+      <canvas id="view3dCanvas"></canvas>
+    </div>
+  `;
+  modal.style.cssText = 'position:fixed;inset:0;z-index:1000;background:rgba(0,0,0,0.9);display:flex;align-items:center;justify-content:center;';
+  document.body.appendChild(modal);
+
+  const overlay = modal.querySelector('.view3d-overlay');
+  overlay.style.cssText = 'width:100%;height:100%;position:relative;display:flex;flex-direction:column;';
+  const header = modal.querySelector('.view3d-header');
+  header.style.cssText = 'padding:1rem;display:flex;justify-content:space-between;align-items:center;background:#fff;color:#1a1a2e;border-bottom:1px solid #eee;';
+  const controlsDiv = modal.querySelector('.view3d-controls');
+  controlsDiv.style.cssText = 'padding:0.5rem 1rem;display:flex;flex-wrap:wrap;gap:1rem;align-items:center;background:#f8f8f8;color:#1a1a2e;font-size:0.8rem;border-bottom:1px solid #eee;';
+  controlsDiv.querySelectorAll('label').forEach(l => {
+    l.style.display = 'flex';
+    l.style.alignItems = 'center';
+    l.style.gap = '0.5rem';
+    l.querySelector('input').style.width = '80px';
+  });
+  const canvas3d = modal.querySelector('#view3dCanvas');
+  canvas3d.style.cssText = 'flex:1;width:100%;min-height:300px;';
+
+  const scene = new Scene();
+  scene.background = new Color(0xffffff);
+  const camera = new PerspectiveCamera(50, canvas3d.clientWidth / canvas3d.clientHeight, 0.01, 1000);
+  const renderer = new WebGLRenderer({ canvas: canvas3d, antialias: true });
+  renderer.setSize(canvas3d.clientWidth, canvas3d.clientHeight);
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+
+  const controls = new OrbitControls(camera, renderer.domElement);
+  controls.enableDamping = true;
+  controls.dampingFactor = 0.05;
+  controls.enableZoom = true;
+  controls.minDistance = 0.5;
+  controls.maxDistance = 20;
+
+  scene.add(new AmbientLight(0xffffff, 0.9));
+  scene.add(new DirectionalLight(0xffffff, 0.8));
+  scene.add(new DirectionalLight(0xcccccc, 0.4));
+
+  const strokeGroup = new Group();
+  scene.add(strokeGroup);
+
+  const cx = whiteboard.width / 2;
+  const cy = whiteboard.height / 2;
+  const baseScale = 0.012;
+  const baseTubeRadius = 0.025;
+  const meshes = [];
+
+  class SimpleCurve extends Curve {
+    constructor(points) {
+      super();
+      this.points = points;
+    }
+    getPoint(t) {
+      const pts = this.points;
+      const i = (pts.length - 1) * t;
+      const i0 = Math.min(Math.floor(i), pts.length - 2);
+      const i1 = i0 + 1;
+      const frac = i - i0;
+      return new Vector3(
+        pts[i0].x + (pts[i1].x - pts[i0].x) * frac,
+        pts[i0].y + (pts[i1].y - pts[i0].y) * frac,
+        pts[i0].z + (pts[i1].z - pts[i0].z) * frac
+      );
+    }
+  }
+
+  strokes.forEach(stroke => {
+    const unique = stroke.filter((p, i) => i === 0 || (p.x !== stroke[i-1].x || p.y !== stroke[i-1].y));
+    if (unique.length < 2) return;
+    const totalLen = unique.reduce((a, p, i) => i ? a + Math.hypot(p.x - unique[i-1].x, p.y - unique[i-1].y) : 0, 0);
+    if (totalLen < 15) return;
+    const points = unique.map(p => new Vector3(
+      (p.x - cx) * baseScale,
+      -(p.y - cy) * baseScale,
+      0
+    ));
+    try {
+      const curve = new SimpleCurve(points);
+      const geometry = new TubeGeometry(curve, 24, baseTubeRadius, 8, false);
+      const material = new MeshPhongMaterial({
+        color: 0x1a1a2e,
+        shininess: 60,
+        specular: 0x333333
+      });
+      const mesh = new Mesh(geometry, material);
+      mesh.userData = { curve, baseRadius: baseTubeRadius };
+      strokeGroup.add(mesh);
+      meshes.push(mesh);
+    } catch (e) {
+      console.warn('Skip stroke:', e);
+    }
+  });
+
+  const box = new Box3().setFromObject(strokeGroup);
+  const center = box.getCenter(new Vector3());
+  const size = box.getSize(new Vector3());
+  const maxDim = Math.max(size.x, size.y, size.z, 0.5);
+  const camDist = Math.max(maxDim * 2.5, 2);
+  camera.position.set(center.x + camDist * 0.5, center.y + camDist * 0.3, center.z + camDist);
+  camera.lookAt(center);
+  controls.target.copy(center);
+
+  function updateFinetune() {
+    const scaleVal = parseFloat(document.getElementById('scale3d')?.value ?? 1);
+    const rotX = (Math.PI / 180) * parseFloat(document.getElementById('rotX3d')?.value ?? 0);
+    const rotY = (Math.PI / 180) * parseFloat(document.getElementById('rotY3d')?.value ?? 0);
+    const tubeVal = parseFloat(document.getElementById('tube3d')?.value ?? 1);
+    strokeGroup.scale.setScalar(scaleVal);
+    strokeGroup.rotation.x = rotX;
+    strokeGroup.rotation.y = rotY;
+    meshes.forEach(mesh => {
+      const { curve: path, baseRadius } = mesh.userData;
+      if (path) {
+        mesh.geometry.dispose();
+        mesh.geometry = new TubeGeometry(path, 24, baseRadius * tubeVal, 8, false);
+      }
+    });
+  }
+
+  ['scale3d', 'rotX3d', 'rotY3d', 'tube3d'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.addEventListener('input', updateFinetune);
+  });
+
+  function animate() {
+    if (!document.getElementById('view3dModal')) return;
+    requestAnimationFrame(animate);
+    controls.update();
+    renderer.render(scene, camera);
+  }
+  animate();
+
+  function onResize() {
+    camera.aspect = canvas3d.clientWidth / canvas3d.clientHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(canvas3d.clientWidth, canvas3d.clientHeight);
+  }
+  window.addEventListener('resize', onResize);
+
+  modal.querySelector('#close3dBtn').style.cssText = 'padding:0.5rem 1rem;cursor:pointer;background:#1a1a2e;color:#fff;border:none;border-radius:6px;font-weight:600;';
+  modal.querySelector('#close3dBtn').onclick = () => {
+    window.removeEventListener('resize', onResize);
+    renderer.dispose();
+    modal.remove();
+  };
 }
 
 // Event listeners
 startBtn.addEventListener('click', startCamera);
 clearBtn.addEventListener('click', clearWhiteboard);
+document.getElementById('convert3dBtn').addEventListener('click', convertTo3D);
 
 // Initialize whiteboard on load (before camera starts)
 initWhiteboard();
