@@ -194,6 +194,15 @@
     #convert3dBtn:hover {
       background: rgba(0, 217, 255, 0.5);
     }
+    
+    #takePhotoBtn {
+      background: rgba(0, 255, 136, 0.3);
+      color: #00ff88;
+    }
+    
+    #takePhotoBtn:hover:not(:disabled) {
+      background: rgba(0, 255, 136, 0.5);
+    }
   </style>
 </head>
 <body>
@@ -205,7 +214,7 @@
   
   <div class="main-grid">
     <div class="camera-section">
-      <div class="instruction-hint">Draw: pinch thumb + index. Face the camera and smile to take a photo! (Yellow outline = face detected)</div>
+      <div class="instruction-hint">Draw: pinch thumb + index. Smile big to take a photo!</div>
       <div class="panel-label">Camera</div>
       <div class="video-wrapper">
         <video id="video" autoplay playsinline></video>
@@ -223,6 +232,7 @@
   
   <div class="controls">
     <button id="startBtn" disabled>Start Camera</button>
+    <button id="takePhotoBtn" disabled title="Or smile to auto-capture">Take Photo</button>
     <button id="clearBtn">Clear Whiteboard</button>
     <button id="convert3dBtn">Convert to 3D</button>
   </div>

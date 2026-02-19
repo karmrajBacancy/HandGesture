@@ -43,10 +43,13 @@ let drawReleaseFrames = 0;     // Hysteresis: stay drawing for a few frames afte
 let strokeHistory = [];
 let currentStroke = [];
 
-// Smile detection
-const SMILE_THRESHOLD = 0.5;
+// Smile detection - big smile triggers photo
+const SMILE_THRESHOLD = 0.45;     // Blendshapes: mouthSmile (0.45 = noticeable smile)
+const MOUTH_WIDTH_SMILE = 0.08;   // Landmark: mouth corners spread (normalized 0-1)
+const SMILE_FRAMES = 1;           // 1 = instant capture, 2 = sustained smile
 const SMILE_COOLDOWN_MS = 1500;
 let lastSmilePhotoTime = 0;
+let smileFrameCount = 0;
 
 // DOM elements
 const startBtn = document.getElementById('startBtn');
@@ -347,34 +350,37 @@ function detectAndDraw() {
     }
   }
 
-  // Smile detection - take photo when smiling (blendshapes or landmark fallback)
+  // Smile detection - take photo when big smile (blendshapes or landmark fallback)
   let isSmiling = false;
-  function doSmileCapture() {
-    const now = performance.now();
-    if (now - lastSmilePhotoTime > SMILE_COOLDOWN_MS) {
-      lastSmilePhotoTime = now;
-      capturePhoto();
-      const el = document.getElementById('smileIndicator');
-      if (el) { el.textContent = '😊 Photo!'; setTimeout(() => { el.textContent = ''; }, 1500); }
-    }
-  }
   if (faceResults?.faceBlendshapes?.length > 0) {
     const blendshapes = faceResults.faceBlendshapes[0];
     const smileCat = blendshapes.categories?.find(c => c.categoryName === 'mouthSmile');
-    if (smileCat && smileCat.score >= SMILE_THRESHOLD) {
-      isSmiling = true;
-      doSmileCapture();
-    }
-  } else if (faceResults?.faceLandmarks?.length > 0) {
+    if (smileCat && smileCat.score >= SMILE_THRESHOLD) isSmiling = true;
+  }
+  if (!isSmiling && faceResults?.faceLandmarks?.length > 0) {
     const lm = faceResults.faceLandmarks[0];
     if (lm.length >= 292) {
       const left = lm[61], right = lm[291];
-      const mouthW = Math.abs(right.x - left.x);
-      if (mouthW > 0.12) {
-        isSmiling = true;
-        doSmileCapture();
+      if (left && right) {
+        const mouthW = Math.abs(right.x - left.x);
+        if (mouthW >= MOUTH_WIDTH_SMILE) isSmiling = true;
       }
     }
+  }
+  if (isSmiling) {
+    smileFrameCount++;
+    if (smileFrameCount >= SMILE_FRAMES) {
+      const now = performance.now();
+      if (now - lastSmilePhotoTime > SMILE_COOLDOWN_MS) {
+        lastSmilePhotoTime = now;
+        smileFrameCount = 0;
+        capturePhoto();
+        const el = document.getElementById('smileIndicator');
+        if (el) { el.textContent = '😊 Photo!'; setTimeout(() => { el.textContent = ''; }, 1500); }
+      }
+    }
+  } else {
+    smileFrameCount = 0;
   }
 
   // Clear canvas
@@ -400,42 +406,14 @@ function detectAndDraw() {
     drawPenCursor(null, null, false);
   }
 
-  // Draw face landmarks when detected (visual feedback)
-  const mx = (x) => (1 - x) * canvas.width;
-  const my = (y) => y * canvas.height;
-  const FACE_OVAL = [[10,338],[338,297],[297,332],[332,284],[284,251],[251,389],[389,356],[356,454],[454,323],[323,361],[361,288],[288,397],[397,365],[365,379],[379,378],[378,400],[400,377],[377,152],[152,148],[148,176],[176,149],[149,150],[150,136],[136,172],[172,58],[58,132],[132,93],[93,234],[234,127],[127,162],[162,21],[21,54],[54,103],[103,67],[67,109],[109,10]];
-  const LIPS = [[61,146],[146,91],[91,181],[181,84],[84,17],[17,314],[314,405],[405,321],[321,375],[375,291],[61,185],[185,40],[40,39],[39,37],[37,0],[0,267],[267,269],[269,270],[270,409],[409,291],[78,95],[95,88],[88,178],[178,87],[87,14],[14,317],[317,402],[402,318],[318,324],[324,308],[78,191],[191,80],[80,81],[81,82],[82,13],[13,312],[312,311],[311,310],[310,415],[415,308]];
-  if (faceResults?.faceLandmarks?.length > 0 && ctx) {
-    const lm = faceResults.faceLandmarks[0];
-    // Face oval
-    ctx.strokeStyle = isSmiling ? 'rgba(0, 255, 136, 0.9)' : 'rgba(255, 200, 0, 0.8)';
-    ctx.lineWidth = isSmiling ? 3 : 2;
-    ctx.beginPath();
-    const first = lm[FACE_OVAL[0][0]];
-    if (first) ctx.moveTo(mx(first.x), my(first.y));
-    for (const [, b] of FACE_OVAL) {
-      const p = lm[b];
-      if (p) ctx.lineTo(mx(p.x), my(p.y));
-    }
-    ctx.closePath();
-    ctx.stroke();
-    // Lips - highlight when smiling
-    ctx.strokeStyle = isSmiling ? '#00ff88' : 'rgba(255, 150, 100, 0.6)';
-    ctx.lineWidth = isSmiling ? 3 : 1.5;
-    ctx.beginPath();
-    for (const [a, b] of LIPS) {
-      const pa = lm[a], pb = lm[b];
-      if (pa && pb) {
-        ctx.moveTo(mx(pa.x), my(pa.y));
-        ctx.lineTo(mx(pb.x), my(pb.y));
-      }
-    }
-    ctx.stroke();
-  }
-  // Smile indicator (live when smiling, "Photo!" overrides for 1.5s after capture)
+  // Smile indicator: "😊" when smiling, "Photo!" after capture
   const smileEl = document.getElementById('smileIndicator');
-  if (smileEl && (performance.now() - lastSmilePhotoTime > SMILE_COOLDOWN_MS)) {
-    smileEl.textContent = isSmiling ? '😊 Smile!' : '';
+  if (smileEl) {
+    if (performance.now() - lastSmilePhotoTime < 1500) {
+      // Keep "Photo!" for 1.5s after capture (set in doSmileCapture)
+    } else {
+      smileEl.textContent = isSmiling ? '😊' : '';
+    }
   }
 
   animationId = requestAnimationFrame(detectAndDraw);
@@ -458,6 +436,8 @@ async function startCamera() {
     isDrawing = false;
     drawReleaseFrames = 0;
     startBtn.textContent = 'Start Camera';
+    const takePhotoBtn = document.getElementById('takePhotoBtn');
+    if (takePhotoBtn) takePhotoBtn.disabled = true;
     return;
   }
 
@@ -475,6 +455,8 @@ async function startCamera() {
       video.play();
       isRunning = true;
       startBtn.textContent = 'Stop Camera';
+      const takePhotoBtn = document.getElementById('takePhotoBtn');
+      if (takePhotoBtn) takePhotoBtn.disabled = false;
       lastVideoTime = -1;
       detectAndDraw();
     };
@@ -728,6 +710,9 @@ async function convertTo3D() {
 startBtn.addEventListener('click', startCamera);
 clearBtn.addEventListener('click', clearWhiteboard);
 document.getElementById('convert3dBtn').addEventListener('click', convertTo3D);
+document.getElementById('takePhotoBtn')?.addEventListener('click', () => {
+  if (isRunning && video?.videoWidth) capturePhoto();
+});
 
 // Initialize whiteboard on load (before camera starts)
 initWhiteboard();
