@@ -569,7 +569,8 @@ async function convertTo3D() {
       </div>
       <div style="flex:1;position:relative;">
         <canvas id="view3dCanvas"></canvas>
-        <div id="view3dCamPreview" style="position:absolute;bottom:12px;right:12px;width:160px;height:120px;border:2px solid rgba(0,255,136,0.6);border-radius:8px;overflow:hidden;background:#000;box-shadow:0 4px 12px rgba(0,0,0,0.4);">
+        <div id="view3dCamPreview" style="position:absolute;top:16px;right:16px;width:220px;height:165px;border:3px solid rgba(0,255,136,0.9);border-radius:10px;overflow:hidden;background:#111;box-shadow:0 4px 20px rgba(0,0,0,0.6),0 0 0 1px rgba(255,255,255,0.1);z-index:10;">
+          <div style="position:absolute;bottom:0;left:0;right:0;padding:4px 8px;background:rgba(0,0,0,0.75);color:#00ff88;font-size:11px;z-index:2;">Hand control</div>
           <video id="view3dVideo" autoplay playsinline muted style="width:100%;height:100%;object-fit:cover;transform:scaleX(-1);"></video>
           <canvas id="view3dHandOverlay" style="position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;transform:scaleX(-1);"></canvas>
         </div>
@@ -683,8 +684,8 @@ async function convertTo3D() {
   if (video?.srcObject && view3dVideo) {
     view3dVideo.srcObject = video.srcObject;
     camPreview.style.display = 'block';
-    view3dHandOverlay.width = 160;
-    view3dHandOverlay.height = 120;
+    view3dHandOverlay.width = 220;
+    view3dHandOverlay.height = 165;
   } else {
     camPreview.style.display = 'none';
   }
@@ -747,15 +748,15 @@ async function convertTo3D() {
         const a = landmarks[start], b = landmarks[end];
         if (a && b) {
           oh.beginPath();
-          oh.moveTo(a.x * 160, a.y * 120);
-          oh.lineTo(b.x * 160, b.y * 120);
+          oh.moveTo(a.x * 220, a.y * 165);
+          oh.lineTo(b.x * 220, b.y * 165);
           oh.stroke();
         }
       }
       oh.fillStyle = '#00d9ff';
       landmarks.forEach(p => {
         oh.beginPath();
-        oh.arc(p.x * 160, p.y * 120, 2, 0, Math.PI * 2);
+        oh.arc(p.x * 220, p.y * 165, 2, 0, Math.PI * 2);
         oh.fill();
       });
     }
