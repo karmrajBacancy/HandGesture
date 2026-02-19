@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Hand Gesture Camera</title>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&display=swap');
+    
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+    
+    html, body {
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      font-family: 'JetBrains Mono', monospace;
+      background: linear-gradient(135deg, #0f0f23 0%, #1a1a2e 50%, #16213e 100%);
+      color: #e8e8e8;
+      display: flex;
+      flex-direction: column;
+    }
+    
+    .header {
+      flex-shrink: 0;
+      padding: 0.5rem 1rem;
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+    }
+    
+    h1 {
+      font-size: 1.1rem;
+      font-weight: 600;
+      background: linear-gradient(90deg, #00d9ff, #00ff88);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+    
+    .main-grid {
+      flex: 1;
+      display: flex;
+      min-height: 0;
+      overflow: hidden;
+    }
+    
+    .camera-section,
+    .whiteboard-section {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      min-width: 0;
+      border: 1px solid rgba(0, 217, 255, 0.2);
+    }
+    
+    .panel-label {
+      font-size: 0.7rem;
+      color: #888;
+      padding: 0.3rem 0.5rem;
+      background: rgba(0, 0, 0, 0.3);
+      text-align: center;
+    }
+    
+    .video-wrapper {
+      position: relative;
+      flex: 1;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-width: 0;
+    }
+    
+    video {
+      display: block;
+      transform: scaleX(-1);
+      max-width: 100%;
+      max-height: 100%;
+      object-fit: contain;
+    }
+    
+    #whiteboard {
+      flex: 1;
+      display: block;
+      background: #fff;
+      cursor: crosshair;
+      width: 100%;
+      height: 100%;
+    }
+    
+    #canvas {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      transform: scaleX(-1);
+      pointer-events: none;
+    }
+    
+    .controls {
+      flex-shrink: 0;
+      padding: 0.4rem 1rem;
+      display: flex;
+      gap: 1rem;
+      align-items: center;
+    }
+    
+    button {
+      font-family: inherit;
+      font-size: 0.9rem;
+      padding: 0.6rem 1.2rem;
+      border: none;
+      border-radius: 8px;
+      cursor: pointer;
+      transition: all 0.2s ease;
+    }
+    
+    #startBtn {
+      background: linear-gradient(135deg, #00d9ff, #00ff88);
+      color: #0f0f23;
+      font-weight: 600;
+    }
+    
+    #startBtn:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 4px 20px rgba(0, 217, 255, 0.4);
+    }
+    
+    #startBtn:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+      transform: none;
+    }
+    
+    .status {
+      font-size: 0.85rem;
+      color: #888;
+    }
+    
+    .status.loading {
+      color: #00d9ff;
+    }
+    
+    .status.ready {
+      color: #00ff88;
+    }
+    
+    #clearBtn {
+      background: rgba(255, 100, 100, 0.3);
+      color: #ff6b6b;
+    }
+    
+    #clearBtn:hover {
+      background: rgba(255, 100, 100, 0.5);
+    }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <h1>✋ Hand Gesture Camera</h1>
+    <span id="status" class="status loading">Loading...</span>
+  </div>
+  
+  <div class="main-grid">
+    <div class="camera-section">
+      <div class="panel-label">Camera</div>
+      <div class="video-wrapper">
+        <video id="video" autoplay playsinline></video>
+        <canvas id="canvas"></canvas>
+      </div>
+    </div>
+    <div class="whiteboard-section">
+      <div class="panel-label">Whiteboard</div>
+      <canvas id="whiteboard"></canvas>
+    </div>
+  </div>
+  
+  <div class="controls">
+    <button id="startBtn" disabled>Start Camera</button>
+    <button id="clearBtn">Clear Whiteboard</button>
+  </div>
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>
