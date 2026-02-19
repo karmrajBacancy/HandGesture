@@ -56,6 +56,9 @@ const startBtn = document.getElementById('startBtn');
 const statusEl = document.getElementById('status');
 const clearBtn = document.getElementById('clearBtn');
 
+// 3D hand gesture control callback (set when 3D modal is open)
+let handControls3d = null;
+
 /**
  * Initialize the Hand Landmarker model
  */
@@ -386,15 +389,17 @@ function detectAndDraw() {
   // Clear canvas
   ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-  // Draw detected hands and update whiteboard
-  if (results && results.landmarks && results.landmarks.length > 0) {
-    const colors = ['#00ff88', '#00d9ff'];
-    results.landmarks.forEach((landmarks, i) => {
-      if (i === 0) updateWhiteboardDraw(landmarks);  // Use first hand for whiteboard
-      const color = colors[i % colors.length];
-      drawConnectors(landmarks, color, 3);
-      drawLandmarks(landmarks, color, 5);
-    });
+  // Draw detected hands and update whiteboard (or pass to 3D controls)
+  if (handControls3d) {
+    handControls3d(results?.landmarks?.[0] ?? null);
+  } else if (results && results.landmarks && results.landmarks.length > 0) {
+      const colors = ['#00ff88', '#00d9ff'];
+      results.landmarks.forEach((landmarks, i) => {
+        if (i === 0) updateWhiteboardDraw(landmarks);
+        const color = colors[i % colors.length];
+        drawConnectors(landmarks, color, 3);
+        drawLandmarks(landmarks, color, 5);
+      });
     drawPenCursor(smoothedX, smoothedY, isDrawing);
   } else {
     lastDrawX = null;
@@ -539,17 +544,21 @@ async function convertTo3D() {
     alert('Draw something first, then click Convert to 3D');
     return;
   }
+  if (!isRunning) {
+    await startCamera();
+    await new Promise(r => setTimeout(r, 500));
+  }
 
   const THREE = await import('https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js');
   const { OrbitControls } = await import('https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/controls/OrbitControls.js');
-  const { Scene, PerspectiveCamera, WebGLRenderer, Mesh, MeshPhongMaterial, TubeGeometry, Vector3, AmbientLight, DirectionalLight, Color, Curve, Group, Box3 } = THREE;
+  const { Scene, PerspectiveCamera, WebGLRenderer, Mesh, MeshPhongMaterial, TubeGeometry, Vector3, AmbientLight, DirectionalLight, Color, Curve, Group, Box3, Spherical } = THREE;
 
   const modal = document.createElement('div');
   modal.id = 'view3dModal';
   modal.innerHTML = `
     <div class="view3d-overlay">
       <div class="view3d-header">
-        <span>3D View — Drag to rotate • Scroll to zoom</span>
+        <span>3D View — Hand: move to rotate • pinch fingers = zoom in • spread fingers = zoom out</span>
         <button id="close3dBtn">Close</button>
       </div>
       <div class="view3d-controls">
@@ -558,7 +567,13 @@ async function convertTo3D() {
         <label>Rotate Y <input type="range" id="rotY3d" min="0" max="360" step="5" value="0"><span>°</span></label>
         <label>Tube <input type="range" id="tube3d" min="0.5" max="3" step="0.1" value="1"></label>
       </div>
-      <canvas id="view3dCanvas"></canvas>
+      <div style="flex:1;position:relative;">
+        <canvas id="view3dCanvas"></canvas>
+        <div id="view3dCamPreview" style="position:absolute;bottom:12px;right:12px;width:160px;height:120px;border:2px solid rgba(0,255,136,0.6);border-radius:8px;overflow:hidden;background:#000;box-shadow:0 4px 12px rgba(0,0,0,0.4);">
+          <video id="view3dVideo" autoplay playsinline muted style="width:100%;height:100%;object-fit:cover;transform:scaleX(-1);"></video>
+          <canvas id="view3dHandOverlay" style="position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;transform:scaleX(-1);"></canvas>
+        </div>
+      </div>
     </div>
   `;
   modal.style.cssText = 'position:fixed;inset:0;z-index:1000;background:rgba(0,0,0,0.9);display:flex;align-items:center;justify-content:center;';
@@ -661,6 +676,102 @@ async function convertTo3D() {
   camera.lookAt(center);
   controls.target.copy(center);
 
+  // Camera preview for hand gesture control
+  const camPreview = modal.querySelector('#view3dCamPreview');
+  const view3dVideo = modal.querySelector('#view3dVideo');
+  const view3dHandOverlay = modal.querySelector('#view3dHandOverlay');
+  if (video?.srcObject && view3dVideo) {
+    view3dVideo.srcObject = video.srcObject;
+    camPreview.style.display = 'block';
+    view3dHandOverlay.width = 160;
+    view3dHandOverlay.height = 120;
+  } else {
+    camPreview.style.display = 'none';
+  }
+
+  // Hand gesture control for 3D: rotate (index position) + zoom (thumb-index distance)
+  const ROTATE_SENSITIVITY = 3;
+  const ZOOM_SENSITIVITY = 25;      // Zoom per unit change in thumb-index distance
+  const ZOOM_DEADZONE = 0.003;     // Ignore tiny changes (noise)
+  let lastHandX = null, lastHandY = null, lastPinchDist = null;
+  const spherical = new Spherical();
+  const v = new Vector3();
+
+  handControls3d = (landmarks) => {
+    if (!landmarks || !view3dHandOverlay) {
+      controls.enabled = true;
+      if (view3dHandOverlay) {
+        const oh = view3dHandOverlay.getContext('2d');
+        if (oh) oh.clearRect(0, 0, view3dHandOverlay.width, view3dHandOverlay.height);
+      }
+      return;
+    }
+    controls.enabled = false;
+    const indexTip = landmarks[8], thumbTip = landmarks[4];
+    if (!indexTip || !thumbTip) {
+      lastHandX = lastHandY = lastPinchDist = null;
+      return;
+    }
+    const pinchDist = Math.hypot(indexTip.x - thumbTip.x, indexTip.y - thumbTip.y);
+    const hx = indexTip.x, hy = indexTip.y;
+
+    // Zoom: thumb-index distance change (pinch together = zoom IN, spread = zoom OUT)
+    if (lastPinchDist !== null) {
+      const delta = lastPinchDist - pinchDist;
+      if (Math.abs(delta) > ZOOM_DEADZONE) {
+        v.setFromSpherical(spherical);
+        spherical.radius = Math.max(0.5, Math.min(20, spherical.radius - delta * ZOOM_SENSITIVITY));
+      }
+    }
+    lastPinchDist = pinchDist;
+
+    // Rotate: index finger position change
+    if (lastHandX !== null && lastHandY !== null) {
+      spherical.theta -= (hx - lastHandX) * ROTATE_SENSITIVITY;
+      spherical.phi += (hy - lastHandY) * ROTATE_SENSITIVITY;
+      spherical.phi = Math.max(0.1, Math.min(Math.PI - 0.1, spherical.phi));
+    }
+    lastHandX = hx;
+    lastHandY = hy;
+
+    v.setFromSpherical(spherical);
+    camera.position.copy(controls.target).add(v);
+
+    // Draw hand on preview
+    const oh = view3dHandOverlay.getContext('2d');
+    if (oh) {
+      oh.clearRect(0, 0, view3dHandOverlay.width, view3dHandOverlay.height);
+      oh.strokeStyle = '#00ff88';
+      oh.lineWidth = 2;
+      for (const [start, end] of HAND_CONNECTIONS) {
+        const a = landmarks[start], b = landmarks[end];
+        if (a && b) {
+          oh.beginPath();
+          oh.moveTo(a.x * 160, a.y * 120);
+          oh.lineTo(b.x * 160, b.y * 120);
+          oh.stroke();
+        }
+      }
+      oh.fillStyle = '#00d9ff';
+      landmarks.forEach(p => {
+        oh.beginPath();
+        oh.arc(p.x * 160, p.y * 120, 2, 0, Math.PI * 2);
+        oh.fill();
+      });
+    }
+  };
+
+  function syncSpherical() {
+    v.subVectors(camera.position, controls.target);
+    spherical.setFromVector3(v);
+  }
+  syncSpherical();
+
+  ['scale3d', 'rotX3d', 'rotY3d', 'tube3d'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.addEventListener('input', updateFinetune);
+  });
+
   function updateFinetune() {
     const scaleVal = parseFloat(document.getElementById('scale3d')?.value ?? 1);
     const rotX = (Math.PI / 180) * parseFloat(document.getElementById('rotX3d')?.value ?? 0);
@@ -677,11 +788,6 @@ async function convertTo3D() {
       }
     });
   }
-
-  ['scale3d', 'rotX3d', 'rotY3d', 'tube3d'].forEach(id => {
-    const el = document.getElementById(id);
-    if (el) el.addEventListener('input', updateFinetune);
-  });
 
   function animate() {
     if (!document.getElementById('view3dModal')) return;
@@ -700,6 +806,7 @@ async function convertTo3D() {
 
   modal.querySelector('#close3dBtn').style.cssText = 'padding:0.5rem 1rem;cursor:pointer;background:#1a1a2e;color:#fff;border:none;border-radius:6px;font-weight:600;';
   modal.querySelector('#close3dBtn').onclick = () => {
+    handControls3d = null;
     window.removeEventListener('resize', onResize);
     renderer.dispose();
     modal.remove();
