@@ -24,6 +24,8 @@ let animationId = null;
 // Whiteboard - uses full viewport, resized on init and resize
 let whiteboard = null;
 let whiteboardCtx = null;
+let cursorCanvas = null;
+let cursorCtx = null;
 const DRAW_THRESHOLD = 0.04;  // Tighter pinch for more precise drawing
 let lastDrawX = null;
 let lastDrawY = null;
@@ -158,6 +160,50 @@ function updateWhiteboardDraw(landmarks) {
 }
 
 /**
+ * Draw pen cursor on whiteboard overlay
+ */
+function drawPenCursor(x, y, drawing) {
+  if (!cursorCtx || !cursorCanvas) return;
+  cursorCtx.clearRect(0, 0, cursorCanvas.width, cursorCanvas.height);
+  if (x === null || y === null) return;
+
+  const size = 14;
+  cursorCtx.save();
+  cursorCtx.translate(x, y);
+  cursorCtx.rotate(-0.35);  // Slight tilt like a pen
+
+  // Pen body (rounded rect)
+  cursorCtx.fillStyle = drawing ? '#1a1a2e' : '#00d9ff';
+  cursorCtx.strokeStyle = drawing ? '#00ff88' : '#0088aa';
+  cursorCtx.lineWidth = 2;
+  cursorCtx.beginPath();
+  const r = 4;
+  cursorCtx.moveTo(-size/2 + r, -size*1.2);
+  cursorCtx.lineTo(size/2 - r, -size*1.2);
+  cursorCtx.quadraticCurveTo(size/2, -size*1.2, size/2, -size*1.2 + r);
+  cursorCtx.lineTo(size/2, size*0.6 - r);
+  cursorCtx.quadraticCurveTo(size/2, size*0.6, size/2 - r, size*0.6);
+  cursorCtx.lineTo(-size/2 + r, size*0.6);
+  cursorCtx.quadraticCurveTo(-size/2, size*0.6, -size/2, size*0.6 - r);
+  cursorCtx.lineTo(-size/2, -size*1.2 + r);
+  cursorCtx.quadraticCurveTo(-size/2, -size*1.2, -size/2 + r, -size*1.2);
+  cursorCtx.closePath();
+  cursorCtx.fill();
+  cursorCtx.stroke();
+
+  // Pen tip (circle)
+  cursorCtx.fillStyle = drawing ? '#1a1a2e' : '#00d9ff';
+  cursorCtx.beginPath();
+  cursorCtx.arc(0, size*0.9, size/2.5, 0, Math.PI * 2);
+  cursorCtx.fill();
+  cursorCtx.strokeStyle = '#fff';
+  cursorCtx.lineWidth = 1.5;
+  cursorCtx.stroke();
+
+  cursorCtx.restore();
+}
+
+/**
  * Draw landmark points
  */
 function drawLandmarks(landmarks, color = '#00d9ff', radius = 4) {
@@ -212,12 +258,14 @@ function detectAndDraw() {
       drawConnectors(landmarks, color, 3);
       drawLandmarks(landmarks, color, 5);
     });
+    drawPenCursor(smoothedX, smoothedY, isDrawing);
   } else {
     lastDrawX = null;
     lastDrawY = null;
     smoothedX = null;
     smoothedY = null;
     isDrawing = false;
+    drawPenCursor(null, null, false);
   }
 
   animationId = requestAnimationFrame(detectAndDraw);
@@ -271,6 +319,7 @@ async function startCamera() {
  */
 function resizeWhiteboard() {
   whiteboard = document.getElementById('whiteboard');
+  cursorCanvas = document.getElementById('cursorCanvas');
   if (!whiteboard) return;
   const rect = whiteboard.getBoundingClientRect();
   const dpr = window.devicePixelRatio || 1;
@@ -283,6 +332,11 @@ function resizeWhiteboard() {
     whiteboardCtx.fillStyle = '#ffffff';
     whiteboardCtx.fillRect(0, 0, whiteboard.width, whiteboard.height);
   }
+  if (cursorCanvas) {
+    cursorCanvas.width = whiteboard.width;
+    cursorCanvas.height = whiteboard.height;
+    cursorCtx = cursorCanvas.getContext('2d');
+  }
 }
 
 /**
@@ -290,11 +344,15 @@ function resizeWhiteboard() {
  */
 function initWhiteboard() {
   whiteboard = document.getElementById('whiteboard');
+  cursorCanvas = document.getElementById('cursorCanvas');
   if (!whiteboard) return;
   resizeWhiteboard();
   whiteboardCtx = whiteboard.getContext('2d');
   whiteboardCtx.fillStyle = '#ffffff';
   whiteboardCtx.fillRect(0, 0, whiteboard.width, whiteboard.height);
+  if (cursorCanvas) {
+    cursorCtx = cursorCanvas.getContext('2d');
+  }
   window.addEventListener('resize', resizeWhiteboard);
 }
 
