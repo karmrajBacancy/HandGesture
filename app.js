@@ -43,9 +43,9 @@ let drawReleaseFrames = 0;     // Hysteresis: stay drawing for a few frames afte
 let strokeHistory = [];
 let currentStroke = [];
 
-// Smile detection - big smile triggers photo
-const SMILE_THRESHOLD = 0.45;     // Blendshapes: mouthSmile (0.45 = noticeable smile)
-const MOUTH_WIDTH_SMILE = 0.08;   // Landmark: mouth corners spread (normalized 0-1)
+// Smile detection - requires a bit more smile to capture
+const SMILE_THRESHOLD = 0.55;     // Blendshapes: mouthSmile (0.55 = fuller smile)
+const MOUTH_WIDTH_SMILE = 0.10;   // Landmark: mouth corners spread (wider = bigger smile)
 const SMILE_FRAMES = 1;           // 1 = instant capture, 2 = sustained smile
 const SMILE_COOLDOWN_MS = 1500;
 let lastSmilePhotoTime = 0;
