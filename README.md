@@ -1,12 +1,12 @@
 # Hand Gesture Camera
 
-A simple web app that detects your hand in real-time using your camera and draws the gesture skeleton on screen.
+A web app that detects your hand in real-time and lets you draw on a whiteboard using hand gestures — no mouse or touch required.
 
 ## Features
 
 - **Real-time hand detection** using Google MediaPipe Hand Landmarker
-- **21-point hand skeleton** — fingers, palm, and joints are tracked
-- **Dual hand support** — detects up to 2 hands (green and cyan)
+- **Gesture drawing** — pinch thumb + index finger to draw on the whiteboard
+- **50-50 layout** — camera and whiteboard side by side
 - **No installation** — runs entirely in the browser
 
 ## How to Run
@@ -35,24 +35,34 @@ Then open the URL shown in the terminal (usually http://localhost:3000).
 
 Right-click `index.html` → "Open with Live Server"
 
-## Usage
+## How to Use
 
-1. Wait for "Model loaded! Click Start Camera"
-2. Click **Start Camera** and allow camera access when prompted
-3. Hold your hand in front of the camera — the skeleton will be drawn in real-time
-4. **Snap your fingers** (thumb + middle finger together) to trigger an action — a green flash and counter will confirm detection
-5. Click **Stop Camera** when done
+### 1. Start the app
 
-### Custom snap action
+1. Wait for **"Model loaded! Click Start Camera"**
+2. Click **Start Camera**
+3. Allow camera access when your browser asks for permission
 
-Add your own code to run when a snap is detected. In the browser console or in a `<script>` before `app.js`:
+### 2. Draw on the whiteboard
 
-```javascript
-window.onSnap = () => {
-  console.log('Snap detected!');
-  // Your action: toggle UI, play sound, send request, etc.
-};
-```
+- **Pinch** your thumb and index finger together (like holding a pen) to draw
+- **Release** the pinch to move your hand without drawing
+- Point your index finger where you want to draw — the camera tracks it and maps it to the whiteboard
+
+### 3. Clear the whiteboard
+
+- Click **Clear Whiteboard** to erase everything and start over
+
+### 4. Stop the camera
+
+- Click **Stop Camera** when you're done
+
+## Tips
+
+- **Lighting** — Good lighting helps hand detection work better
+- **Distance** — Keep your hand about 1–2 feet from the camera
+- **Pinch tightly** — A firm pinch (thumb + index close together) gives cleaner lines
+- **One hand** — The whiteboard uses the first detected hand for drawing
 
 ## Requirements
 
